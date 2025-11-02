@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Celery + Redis Demo</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, textarea, button {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            padding: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #28a745;
+            transition: width 0.3s ease;
+        }
+        .task-result {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            border-left: 4px solid #007bff;
+        }
+        .status-pending { color: #ffc107; }
+        .status-progress { color: #17a2b8; }
+        .status-success { color: #28a745; }
+        .status-failure { color: #dc3545; }
+    </style>
+</head>
+<body>
+    <h1>🚀 Демо: Celery + Redis</h1>
+    <p>Отправляйте задачи в фоновый режим и отслеживайте их выполнение в реальном времени!</p>
+
+    <!-- Отправка Email -->
+    <div class="container">
+        <h2>📧 Отправка Email (долгая задача)</h2>
+        <form id="emailForm">
+            <div class="form-group">
+                <label>Получатель:</label>
+                <input type="email" id="recipient" value="user@example.com" required>
+            </div>
+            <div class="form-group">
+                <label>Тема:</label>
+                <input type="text" id="subject" value="Тестовое письмо от Celery" required>
+            </div>
+            <div class="form-group">
+                <label>Сообщение:</label>
+                <textarea id="message" rows="3" required>Привет! Это тестовое сообщение, отправленное через Celery worker.</textarea>
+            </div>
+            <button type="submit">Отправить Email в фоне</button>
+        </form>
+        <div id="emailResult"></div>
+    </div>
+
+    <!-- Вычисления -->
+    <div class="container">
+        <h2>🧮 Вычисления (быстрая задача)</h2>
+        <form id="calcForm">
+            <div class="form-group">
+                <label>Числа для суммы (через запятую):</label>
+                <input type="text" id="numbers" value="1,2,3,4,5" required>
+            </div>
+            <button type="submit">Вычислить сумму в фоне</button>
+        </form>
+        <div id="calcResult"></div>
+    </div>
+
+    <!-- Долгая задача -->
+    <div class="container">
+        <h2>⏳ Долгая задача</h2>
+        <form id="longTaskForm">
+            <div class="form-group">
+                <label>Длительность (секунды):</label>
+                <input type="number" id="duration" value="10" min="5" max="30">
+            </div>
+            <button type="submit">Запустить долгую задачу</button>
+        </form>
+        <div id="longTaskResult"></div>
+    </div>
+
+    <script>
+        // Отправка Email
+        document.getElementById('emailForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const button = this.querySelector('button');
+            const resultDiv = document.getElementById('emailResult');
+            
+            button.disabled = true;
+            resultDiv.innerHTML = '<div class="status-pending">Отправка запроса...</div>';
+            
+            try {
+                const response = await fetch('/send_email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        recipient: document.getElementById('recipient').value,
+                        subject: document.getElementById('subject').value,
+                        message: document.getElementById('message').value
+                    })
+                });
+                
+                const data = await response.json();
+                resultDiv.innerHTML = `<div class="status-progress">${data.message}</div>`;
+                
+                // Начинаем отслеживать прогресс
+                trackTaskProgress(data.task_id, 'emailResult');
+                
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="status-failure">Ошибка: ${error.message}</div>`;
+            } finally {
+                button.disabled = false;
+            }
+        });
+
+        // Вычисления
+        document.getElementById('calcForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const button = this.querySelector('button');
+            const resultDiv = document.getElementById('calcResult');
+            
+            button.disabled = true;
+            resultDiv.innerHTML = '<div class="status-pending">Отправка запроса...</div>';
+            
+            try {
+                const numbers = document.getElementById('numbers').value
+                    .split(',')
+                    .map(num => parseInt(num.trim()))
+                    .filter(num => !isNaN(num));
+                
+                const response = await fetch('/calculate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ numbers })
+                });
+                
+                const data = await response.json();
+                resultDiv.innerHTML = `<div class="status-progress">${data.message}</div>`;
+                
+                trackTaskProgress(data.task_id, 'calcResult');
+                
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="status-failure">Ошибка: ${error.message}</div>`;
+            } finally {
+                button.disabled = false;
+            }
+        });
+
+        // Долгая задача
+        document.getElementById('longTaskForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const button = this.querySelector('button');
+            const resultDiv = document.getElementById('longTaskResult');
+            
+            button.disabled = true;
+            resultDiv.innerHTML = '<div class="status-pending">Отправка запроса...</div>';
+            
+            try {
+                const duration = parseInt(document.getElementById('duration').value);
+                
+                const response = await fetch('/long_task', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ duration })
+                });
+                
+                const data = await response.json();
+                resultDiv.innerHTML = `<div class="status-progress">${data.message}</div>`;
+                
+                trackTaskProgress(data.task_id, 'longTaskResult');
+                
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="status-failure">Ошибка: ${error.message}</div>`;
+            } finally {
+                button.disabled = false;
+            }
+        });
+
+        // Функция для отслеживания прогресса задачи
+        async function trackTaskProgress(taskId, resultElementId) {
+            const resultDiv = document.getElementById(resultElementId);
+            let progressInterval;
+            
+            const checkProgress = async () => {
+                try {
+                    const response = await fetch(`/task_status/${taskId}`);
+                    const data = await response.json();
+                    
+                    let html = '';
+                    
+                    if (data.state === 'PENDING') {
+                        html = `<div class="status-pending">${data.status}</div>`;
+                    } else if (data.state === 'PROGRESS') {
+                        const progress = data.progress || 0;
+                        html = `
+                            <div class="status-progress">
+                                <div>${data.details?.status || data.status}</div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: ${progress}%"></div>
+                                </div>
+                                <div>Прогресс: ${progress}%</div>
+                            </div>
+                        `;
+                    } else if (data.state === 'SUCCESS') {
+                        html = `
+                            <div class="status-success">
+                                <strong>✅ Задача завершена!</strong>
+                                <div class="task-result">
+                                    <pre>${JSON.stringify(data.result, null, 2)}</pre>
+                                </div>
+                            </div>
+                        `;
+                        clearInterval(progressInterval);
+                    } else if (data.state === 'FAILURE') {
+                        html = `<div class="status-failure">❌ Ошибка: ${data.result}</div>`;
+                        clearInterval(progressInterval);
+                    }
+                    
+                    resultDiv.innerHTML = html;
+                    
+                } catch (error) {
+                    console.error('Ошибка при проверке прогресса:', error);
+                    clearInterval(progressInterval);
+                }
+            };
+            
+            // Проверяем прогресс каждую секунду
+            progressInterval = setInterval(checkProgress, 1000);
+            checkProgress(); // Первая проверка сразу
+        }
+    </script>
+</body>
+</html>
